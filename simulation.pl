@@ -7,12 +7,10 @@ use AI::Genetic::Pro;
 use Getopt::Long;
 use Algorithm::Permute;
 use Chart::Gnuplot;
+use List::Util qw(shuffle);
 
 use constant MAX_POPULATION => 500;
-use constant INITIAL_SCORE => 10000;
-
-# Input number of dags to be used to get consensus dag
-my $num_dags = 3;
+#use constant INITIAL_SCORE => 10000;
 
 # Input number of generations to evolve
 my $num_gen = 50;
@@ -21,30 +19,41 @@ my $all = 0;
 my $chart_name = 'chart.gif';
 my $random = 1200;
 my $sample = 100;
+my $population = 200;
+my $num_vertex = 10;
+#my $num_edges = 12;
+my $num_dags = 3;
+my $minimum = 10;
+my $range = 5;
 
 GetOptions(
     "gen=i"    => \$num_gen,
     "chart:s"  => \$chart_name,
     "random:i" => \$random,
     "sample:i" => \$sample,
+    "population:i" => \$population,
+    "vertices:i" => \$num_vertex,
+    #"edges:i"  => \$num_edges,
+    "dags:i"   => \$num_dags,
+    "min:i"    => \$minimum,
+    "range:i"  => \$range,
     "all"      => \$all
 ) or die "Invalid command line arguments";
 
 my $count = 0;
 my $sample_data = {};
 
-my @vertices = (0..9);
+my @vertices = (0..$num_vertex-1);
 my $dags = [];
 
 # Run $sample number of times
 while($count < $sample) {
 
-    print STDERR "Processing sample $count\n";
     my $cnt=0;
     $dags = [];
     # Generate 3 random graphs
-    while($cnt < 3) {
-	my $g = Graph->random_graph(vertices => \@vertices, edges => 12);
+    while($cnt < $num_dags) {
+	my $g = Graph->random_graph( vertices => \@vertices, edges => int(rand($range)) + $minimum );
 	if( $g->is_dag && $g->isolated_vertices() <= 0) {
 	    push @$dags, new CDAG($g);
 	    $cnt++;
@@ -52,10 +61,6 @@ while($count < $sample) {
     }
 
     my $fittest = [];
-
-    my $population = fact(scalar @vertices);
-    $population = ($population < MAX_POPULATION ? $population : MAX_POPULATION);
-
     my $ga = AI::Genetic::Pro->new(        
         -fitness         => \&fitness,        # fitness function
         -terminate       => \&terminate,      # terminate function
@@ -72,11 +77,20 @@ while($count < $sample) {
         -variable_length => 0,                # turn variable length OFF
 	);
 
+    print STDERR "Processing sample $count\n";
     $ga->init( \@vertices );
     $ga->evolve($num_gen);
 
+    print STDERR "GA Fittest Value = ", $ga->as_value($ga->getFittest), "\n";
+    print STDERR "GA Fittest = ", join(',', @{$ga->getFittest}), "\n";
+
     push @{ $sample_data->{ga} }, $ga->as_value($ga->getFittest);
-    push @{ $sample_data->{rand} }, get_random_data_score();
+
+    my $rand_chrom = [];
+    my $rand_score = get_random_data_score($rand_chrom);
+    push @{ $sample_data->{rand} }, $rand_score;
+    print STDERR "Random best score = $rand_score\n";
+    print STDERR "Random best = ", join(',', @$rand_chrom), "\n\n";
 
     for(my $i=0; $i < scalar(@$dags); $i++) {
 	my $score = fitness( {}, [ $dags->[$i]{graph}->topological_sort ] );
@@ -139,33 +153,21 @@ $chart->plot2d(@datasets);
 =cut
 sub get_random_data_score {
 
-    # using Genetic::Pro to calculate random best score by evolving for only 1 generation
-    my $ga = AI::Genetic::Pro->new(        
-        -fitness         => \&fitness,        # fitness function
-        -terminate       => \&terminate,      # terminate function
-        -type            => 'combination',    # type of chromosomes
-        -population      => $random,          # population
-        -crossover       => 0.9,              # probab. of crossover
-        -mutation        => 0.01,             # probab. of mutation
-        -parents         => 2,                # number  of parents
-        -selection       => [ 'Roulette' ],   # selection strategy
-        -strategy        => [ 'OX' ],         # crossover strategy
-        -cache           => 0,                # cache results
-        -history         => 1,                # remember best results
-        -preserve        => 3,                # remember the bests
-        -variable_length => 0,                # turn variable length OFF
-	);
+    my $rand_chrom = shift;
+    my $cost = -1;
+    my $cnt = 0;
 
-    $ga->init( \@vertices );
-    
-    return $ga->as_value($ga->getFittest);;
-}
+    while($cnt < $random) {
+	my @rand = shuffle @vertices;
+	my $lcost = fitness({}, \@rand);
+	if($lcost > $cost) {
+	    $cost = $lcost;
+	    @$rand_chrom = @rand;
+	}
+	$cnt++;
+    }
 
-=head2 fact($n)
-=cut
-sub fact {
-  my $n = shift;
-  $n == 0 ? 1 : $n*fact($n-1);
+    return $cost;
 }
 
 =head2 fitness($ga, $s_alpha)
